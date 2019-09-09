@@ -1,6 +1,6 @@
 import torch.nn as nn
 from mmcv.cnn import xavier_init, constant_init, normal_init
-
+import torch
 
 def conv3x3(in_planes, out_planes, stride=1, dilation=1):
     "3x3 convolutioin with padding"
@@ -215,7 +215,7 @@ class SSDRES512(nn.Module):
 
         self.res_layers = []
 
-        for i, num_blocks in enumerate(self.stage_blocks):
+        for i, num_blocks in enumerate(self.stage_blocks):  # (3, 4, 23, 3)
             stride = strides[i]  # (1, 2, 2, 2)
             dilation = dilations[i]  # (1, 1, 1, 1)
             if i <= 3:
@@ -237,12 +237,24 @@ class SSDRES512(nn.Module):
             self.add_module(layer_name, res_layer)
             self.res_layers.append(layer_name)
 
-        self.conv4 = nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn4 = nn.BatchNorm2d(128)
+        self.L2Norm1 = L2Norm(1024, 20)
+        self.L2Norm2 = L2Norm(2048, 20)
+
+        self.conv4 = nn.Conv2d(2048, 1024, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn4 = nn.BatchNorm2d(1024)
         self.relu4 = nn.ReLU(inplace=True)
-        self.conv5 = nn.Conv2d(128, 128, kernel_size=4, stride=1, padding=1, bias=False)
-        self.bn5 = nn.BatchNorm2d(128)
+        self.conv5 = nn.Conv2d(1024, 512, kernel_size=3, stride=2, padding=1, bias=False)
+        self.bn5 = nn.BatchNorm2d(512)
         self.relu5 = nn.ReLU(inplace=True)
+        self.conv6 = nn.Conv2d(512, 256, kernel_size=3, stride=2, padding=1, bias=False)
+        self.bn6 = nn.BatchNorm2d(256)
+        self.relu6 = nn.ReLU(inplace=True)
+        self.conv7 = nn.Conv2d(256, 256, kernel_size=3, stride=1,bias=False)
+        self.bn7 = nn.BatchNorm2d(256)
+        self.relu7 = nn.ReLU(inplace=True)
+        self.conv8 = nn.Conv2d(256, 256, kernel_size=3, stride=1, bias=False)
+        self.bn8 = nn.BatchNorm2d(256)
+        self.relu8 = nn.ReLU(inplace=True)
 
     def init_weight(self, pretraind=None):
         if pretraind is None:
@@ -275,6 +287,9 @@ class SSDRES512(nn.Module):
             if i in self.out_indices:
                 outs.append(x)
 
+        outs[0] = self.L2Norm1(outs[0])
+        outs[1] = self.L2Norm2(outs[1])
+
         x = self.conv4(x)
         x = self.bn4(x)
         x = self.relu4(x)
@@ -282,17 +297,49 @@ class SSDRES512(nn.Module):
         x = self.bn5(x)
         x = self.relu5(x)
         outs.append(x)
+        x = self.conv6(x)
+        x = self.bn6(x)
+        x = self.relu6(x)
+        outs.append(x)
+        x = self.conv7(x)
+        x = self.bn7(x)
+        x = self.relu7(x)
+        outs.append(x)
+        x = self.conv8(x)
+        x = self.bn8(x)
+        x = self.relu8(x)
+        outs.append(x)
 
         if len(outs) == 1:
             return outs[0]
         else:
             return tuple(outs)
 
+class L2Norm(nn.Module):
+    def __init__(self, in_channels, scale):
+        super(L2Norm, self).__init__()
+        self.in_channels = in_channels
+        self.gamma = scale or None
+        self.eps = 1e-10
+        self.weight = nn.Parameter(torch.Tensor(self.in_channels))
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        torch.nn.init.constant_(self.weight, self.gamma)
+
+    def forward(self, x):
+        norm = x.pow(2).sum(dim=1, keepdim=True).sqrt()+self.eps
+        x = torch.div(x, norm)
+        out = self.weight.unsqueeze(0).unsqueeze(2).unsqueeze(3 ).expand_as(x) * x
+        return out
+
 
 if __name__ == "__main__":
     import torch
 
-    input = torch.randn(size=(1, 3, 600, 1000))
-    net = SSDRES512(input_size=(600, 1000), depth=101)
+    input = torch.randn(size=(1, 3, 512, 512))
+    net = SSDRES512(input_size=(512, 512), depth=101)
     out = net(input)
-    print(out.shape)
+    x = out
+    for x in out:
+        print(x.shape)

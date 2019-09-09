@@ -6,7 +6,7 @@ https://github.com/fmassa/vision/blob/voc_dataset/torchvision/datasets/voc.py
 Updated by: Ellis Brown, Max deGroot
 """
 from augmentations import SSDAugmentation
-from config import HOME
+from config import cfg
 import os.path as osp
 import sys
 import torch
@@ -26,7 +26,27 @@ VOC_CLASSES = (  # always index 0
     'sheep', 'sofa', 'train', 'tvmonitor')
 
 # note: if you used our download scripts, this should be right
-VOC_ROOT = osp.join(HOME, "data/VOCdevkit/")
+VOC_ROOT = osp.join(cfg.HOME, "data/VOCdevkit/")
+
+def detection_collate(batch):
+    """Custom collate fn for dealing with batches of images that have a different
+    number of associated object annotations (bounding boxes).
+
+    Arguments:
+        batch: (tuple) A tuple of tensor images and lists of annotations
+
+    Return:
+        A tuple containing:
+            1) (tensor) batch of images stacked on their 0 dim
+            2) (list of tensors) annotations for a given image are stacked on
+                                 0 dim
+    """
+    targets = []
+    imgs = []
+    for sample in batch:
+        imgs.append(sample[0])
+        targets.append(torch.FloatTensor(sample[1]))
+    return torch.stack(imgs, 0), targets
 
 
 class VOCAnnotationTransform(object):
@@ -186,10 +206,15 @@ class VOCDetection(data.Dataset):
 
 if __name__ == "__main__":
     import torch.utils.data as data
-    dataset = VOCDetection(root="/home/licheng/data/VOCdevkit",
+    dataset = VOCDetection(root="/home/lc/data/VOCdevkit",
                            transform=SSDAugmentation())
-    dataloader = data.DataLoader(dataset, batch_size=1, shuffle=False)
+    dataloader = data.DataLoader(dataset, batch_size=32, shuffle=False,
+                                 collate_fn=detection_collate,
+                                 pin_memory=True)
 
-    for x, y in dataloader:
-        print('x', x.shape)
-        print('y', y)
+
+    batch_iter = iter(dataloader)
+
+    for i in range(10):
+        image, gt_info = next(batch_iter)
+        print(image.shape, len(gt_info))
